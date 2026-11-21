@@ -1,0 +1,41 @@
+name: Build SampVoice 3.1 client (.asi)
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: microsoft/setup-msbuild@v2
+
+      # The client uses d3dx9, which is not part of the modern Windows SDK.
+      # Copy it into the project's own include/lib folders (already on its search paths).
+      - name: Get D3DX9 headers and lib
+        shell: pwsh
+        run: |
+          nuget install Microsoft.DXSDK.D3DX -Version 9.29.952.8 -OutputDirectory dxsdk
+          $h   = Get-ChildItem dxsdk -Recurse -Filter d3dx9.h | Select-Object -First 1
+          $lib = Get-ChildItem dxsdk -Recurse -Filter d3dx9.lib | Where-Object { $_.DirectoryName -match 'x86' } | Select-Object -First 1
+          if (-not $h -or -not $lib) { throw "D3DX9 not found in NuGet package" }
+          Copy-Item "$($h.DirectoryName)\d3dx9*" client/include/ -Force
+          Copy-Item $lib.FullName client/libraries/ -Force
+          Get-ChildItem client/include/d3dx9*, client/libraries/d3dx9.lib | Select-Object Name
+
+      # The project targets v141_xp / SDK 7.0, which GitHub runners don't have -> use the runner's toolset
+      - name: Build
+        shell: pwsh
+        run: |
+          msbuild sampvoice.sln /t:client /m /nologo `
+            /p:Configuration=Release /p:Platform=x86 `
+            /p:PlatformToolset=v143 /p:WindowsTargetPlatformVersion=10.0
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sampvoice-client
+          path: bin/sampvoice.asi
